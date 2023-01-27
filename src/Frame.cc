@@ -196,17 +196,17 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     // Frame ID
     mnId=nNextId++;
 
-    // Scale Level Info
+    // 计算图像金字塔的参数
     InitializeScaleLevels();
 
-    // ORB extraction
+    //提取ORB特征，并进行了四叉树均匀化分配
     std::chrono::steady_clock::time_point t11 = std::chrono::steady_clock::now();
     ExtractORBKeyPoints(0,imGray);
     std::chrono::steady_clock::time_point t22 = std::chrono::steady_clock::now();
     orbExtractTime= std::chrono::duration_cast<std::chrono::duration<double> >(t22 - t11).count();
 
     cv::Mat  imGrayT = imGray;
-    // Calculate the dynamic abnormal points and output the T matrix
+    //几何方法进行运动的一致性检测并输出至T矩阵
     if(imGrayPre.data)
     {
         std::chrono::steady_clock::time_point tm1 = std::chrono::steady_clock::now();
@@ -225,14 +225,14 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
 
 void Frame::CalculEverything( cv::Mat &imRGB, const cv::Mat &imGray,const cv::Mat &imDepth,const cv::Mat &imS)
 { 
-
+    //遍历语义分割之后的图像,当检查出 “人” 跳出循环
     int flagprocess = 0;
     for ( int m=0; m<imS.rows; m+=1 )
     {
         for ( int n=0; n<imS.cols; n+=1 )
         {
             int labelnum = (int)imS.ptr<uchar>(m)[n];
-            if(labelnum == PEOPLE_LABLE)
+            if(labelnum == PEOPLE_LABLE)//即语义图中人标签的数字，1
             {
                 flagprocess=1;
                 break;
@@ -242,7 +242,7 @@ void Frame::CalculEverything( cv::Mat &imRGB, const cv::Mat &imGray,const cv::Ma
         if(flagprocess == 1)
         break;
     }
-
+    //去除 人身上的动态点，动态点不为空且存在人
     if(!T_M.empty() && flagprocess )
     {
         std::chrono::steady_clock::time_point tc1 = std::chrono::steady_clock::now();
@@ -251,13 +251,13 @@ void Frame::CalculEverything( cv::Mat &imRGB, const cv::Mat &imGray,const cv::Ma
         double tc= std::chrono::duration_cast<std::chrono::duration<double> >(tc2 - tc1).count();
         cout << "check time =" << tc*1000 <<  endl;
     }
-
+    //计算静态特征点的描述子
     ExtractORBDesp(0,imGray);
     N = mvKeys.size();
     if(mvKeys.empty())
     return;
-    UndistortKeyPoints();
-    ComputeStereoFromRGBD(imDepth);
+    UndistortKeyPoints();//用内参对特征点去畸变
+    ComputeStereoFromRGBD(imDepth);//计算RGBD图像的立体深度信息
     mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));
     mvbOutlier = vector<bool>(N,false);
 
@@ -346,29 +346,33 @@ void Frame::ProcessMovingObject(const cv::Mat &imgray)
 	T_M.clear();
 
 	// Detect dynamic target and ultimately optput the T matrix
-	
+	//调用opencv 函数 计算Harris 角点，将结果保存在 prepoint 矩阵当中
     cv::goodFeaturesToTrack(imGrayPre, prepoint, 1000, 0.01, 8, cv::Mat(), 3, true, 0.04);
     cv::cornerSubPix(imGrayPre, prepoint, cv::Size(10, 10), cv::Size(-1, -1), cv::TermCriteria(CV_TERMCRIT_ITER | CV_TERMCRIT_EPS, 20, 0.03));
-	cv::calcOpticalFlowPyrLK(imGrayPre, imgray, prepoint, nextpoint, state, err, cv::Size(22, 22), 5, cv::TermCriteria(CV_TERMCRIT_ITER | CV_TERMCRIT_EPS, 20, 0.01));
-
+	//Lucas-Kanade方法计算稀疏特征集的光流
+    cv::calcOpticalFlowPyrLK(imGrayPre, imgray, prepoint, nextpoint, state, err, cv::Size(22, 22), 5, cv::TermCriteria(CV_TERMCRIT_ITER | CV_TERMCRIT_EPS, 20, 0.01));
+    //对于光流法得到的 角点进行筛选。
 	for (int i = 0; i < state.size(); i++)
     {
-        if(state[i] != 0)
+        if(state[i] != 0)// 光流跟踪成功的点
         {
             int dx[10] = { -1, 0, 1, -1, 0, 1, -1, 0, 1 };
             int dy[10] = { -1, -1, -1, 0, 0, 0, 1, 1, 1 };
             int x1 = prepoint[i].x, y1 = prepoint[i].y;
             int x2 = nextpoint[i].x, y2 = nextpoint[i].y;
+            // 认为超过规定区域的,太靠近边缘。 跟踪的光流点的status 设置为0 ,一会儿会丢弃这些点
             if ((x1 < limit_edge_corner || x1 >= imgray.cols - limit_edge_corner || x2 < limit_edge_corner || x2 >= imgray.cols - limit_edge_corner
             || y1 < limit_edge_corner || y1 >= imgray.rows - limit_edge_corner || y2 < limit_edge_corner || y2 >= imgray.rows - limit_edge_corner))
             {
                 state[i] = 0;
                 continue;
             }
+            // 对于光流跟踪的结果进行验证，匹配对中心3*3的图像块的像素差（sum）太大，那么也舍弃这个匹配点
             double sum_check = 0;
             for (int j = 0; j < 9; j++)
                 sum_check += abs(imGrayPre.at<uchar>(y1 + dy[j], x1 + dx[j]) - imgray.at<uchar>(y2 + dy[j], x2 + dx[j]));
             if (sum_check > limit_of_check) state[i] = 0;
+            // 好的光流点存入 F_prepoint F_nextpoint 两个数组当中
             if (state[i])
             {
                 F_prepoint.push_back(prepoint[i]);
@@ -378,6 +382,7 @@ void Frame::ProcessMovingObject(const cv::Mat &imgray)
     }
     // F-Matrix
     cv::Mat mask = cv::Mat(cv::Size(1, 300), CV_8UC1);
+    //筛选之后的光流点计算 F 矩阵
     cv::Mat F = cv::findFundamentalMat(F_prepoint, F_nextpoint, mask, cv::FM_RANSAC, 0.1, 0.99);
     for (int i = 0; i < mask.rows; i++)
     {
@@ -398,7 +403,7 @@ void Frame::ProcessMovingObject(const cv::Mat &imgray)
     }
     F_prepoint = F2_prepoint;
     F_nextpoint = F2_nextpoint;
-
+    //对生成的 nextpoint ，利用极线约束进行验证，并且不满足约束的放入T_M 矩阵，如果不满足约束 那应该就是动态点了
     for (int i = 0; i < prepoint.size(); i++)
     {
         if (state[i] != 0)
@@ -406,10 +411,11 @@ void Frame::ProcessMovingObject(const cv::Mat &imgray)
             double A = F.at<double>(0, 0)*prepoint[i].x + F.at<double>(0, 1)*prepoint[i].y + F.at<double>(0, 2);
             double B = F.at<double>(1, 0)*prepoint[i].x + F.at<double>(1, 1)*prepoint[i].y + F.at<double>(1, 2);
             double C = F.at<double>(2, 0)*prepoint[i].x + F.at<double>(2, 1)*prepoint[i].y + F.at<double>(2, 2);
+            // 点到直线的距离
             double dd = fabs(A*nextpoint[i].x + B*nextpoint[i].y + C) / sqrt(A*A + B*B);
 
-            // Judge outliers
-            if (dd <= limit_dis_epi) continue;
+            // Judge outliers认为大于 阈值的点是动态点，存入T_M
+            if (dd <= limit_dis_epi) continue; //阈值大小为1
             T_M.push_back(nextpoint[i]);
         }
     }
