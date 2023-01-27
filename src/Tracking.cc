@@ -214,7 +214,7 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
     mImGray = imRGB;
     mImDepth = imD;
     mImRGB = imRGB;
-    
+    //将RGB或RGBA图像转为灰度图像
     if(mImGray.channels()==3)
     {
         if(mbRGB)
@@ -229,14 +229,15 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
         else
             cvtColor(mImGray,mImGray,CV_BGRA2GRAY);
     }
-
+    //将深度相机的disparity转为Depth , 也就是转换成为真正尺度下的深度
     if(mDepthMapFactor!=1 || mImDepth.type()!=CV_32F);
     mImDepth.convertTo(mImDepth,CV_32F,mDepthMapFactor);
-
+    //创建了Frame ,调用Frame构造函数去提取特征点,通过LK光流提取角点，并对生成的角点施加对极约束，极线约束删除动态点。
     mCurrentFrame = Frame(mImGray,mImDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mThDepth);
     orbExtractTime=mCurrentFrame.orbExtractTime;
     movingDetectTime=mCurrentFrame.movingDetectTime;
     std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
+    //等待语义分割结果 ,语义分割完成
     while(!isNewSegmentImgArrived()) 
     {
         usleep(1);
@@ -244,13 +245,13 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
     std::chrono::steady_clock::time_point t4 = std::chrono::steady_clock::now();
     double ttrack= std::chrono::duration_cast<std::chrono::duration<double> >(t4 - t3).count();
     cout << "wait for new segment img time  =" << ttrack*1000 << endl;
-    // Remove dynamic points 删除动态点 mImgSegmentLatest 分割图片
+    //结合语义分割结果移除动态的外点
     mCurrentFrame.CalculEverything(mImRGB,mImGray,mImDepth,mpSegment->mImgSegmentLatest);
     
     mImS = mpSegment->mImgSegmentLatest;
     mImS_C = mpSegment->mImgSegment_color_final;
-    Track();
-    return mCurrentFrame.mTcw.clone();
+    Track();//移除 动态的外点之后进行正常SLAM的Track 部分
+    return mCurrentFrame.mTcw.clone();//得到SLAM计算的位姿
 }
 
 void Tracking::GetImg(const cv::Mat& img)

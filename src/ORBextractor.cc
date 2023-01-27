@@ -1065,14 +1065,16 @@ int ORBextractor::CheckMovingKeyPoints( const cv::Mat &imGray, const cv::Mat &im
     float scale;
     int flag_orb_mov =0;
    
-   // Make further judgment
-       
+    // Make further judgment
+    //检查剔除区域（T_M集中每个像素点及周围15像素）
+    // 在T_M 离群点的 15*15 的像素块内发现 人，那么flag_orb_mov 设置为1.
 	for (int i = 0; i < T.size(); i++)
 	{
 	    for(int m = -15; m < 15; m++) 
 	    {
 	        for(int n = -15; n < 15; n++)
 	        {
+                //  确定 mx ,my 的范围不能出界
 	            int my = ((int)T[i].y + n) ;
 	            int mx = ((int)T[i].x + m) ;
 		        if( ((int)T[i].y + n) > (Camera::height -1) ) my = (Camera::height - 1) ;
@@ -1096,7 +1098,7 @@ int ORBextractor::CheckMovingKeyPoints( const cv::Mat &imGray, const cv::Mat &im
 	// Moving
 	if(flag_orb_mov==1)
 	{
-	    for (int level = 0; level < nlevels; ++level)
+	    for (int level = 0; level < nlevels; ++level)// 提取每一层的金字塔
             {
                 vector<cv::KeyPoint>& mkeypoints = mvKeysT[level];
 		        int nkeypointsLevel = (int)mkeypoints.size();
@@ -1107,17 +1109,19 @@ int ORBextractor::CheckMovingKeyPoints( const cv::Mat &imGray, const cv::Mat &im
 		        else
 			        scale =1; 
                 vector<cv::KeyPoint>::iterator keypoint = mkeypoints.begin();
-               
+                // 标签带有先验动态，则在特征点金字塔内删除该特征点
                 while(keypoint != mkeypoints.end())
 	            {
 		             cv::Point2f search_coord = keypoint->pt * scale;
 		             // Search in the semantic image
 		             if(search_coord.x >= (Camera::width -1)) search_coord.x=(Camera::width -1);
 		             if(search_coord.y >= (Camera::height -1)) search_coord.y=(Camera::height -1) ;
-		             int label_coord =(int)imS.ptr<uchar>((int)search_coord.y)[(int)search_coord.x];
-		             if(label_coord == PEOPLE_LABLE) 
+		             //  用来访问灰度图像的单个像素。对于灰度图像，每个像素只存储一个值。
+                     int label_coord =(int)imS.ptr<uchar>((int)search_coord.y)[(int)search_coord.x];
+		             //发现这个特征点的坐标 落在 人 身上，则把这个特征点删除
+                     if(label_coord == PEOPLE_LABLE) 
 		             {
-			            keypoint=mkeypoints.erase(keypoint);		       
+			            keypoint=mkeypoints.erase(keypoint);// 将这个特征点删除掉		       
 		             }
 		             else
 		             {
